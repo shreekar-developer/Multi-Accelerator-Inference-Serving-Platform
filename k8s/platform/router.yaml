@@ -1,0 +1,253 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: router
+  namespace: default
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/ml-serving-platform-router-irsa
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: router-config
+  namespace: default
+data:
+  HTTP_PORT: "8080"
+  GRPC_PORT: "9090"
+  AWS_REGION: "us-west-2"
+  DYNAMODB_TABLE_NAME: "ml-serving-platform-model-profiles"
+  S3_BUCKET_NAME: "ml-serving-platform-model-artifacts"
+  SQS_QUEUE_URL: "https://sqs.us-west-2.amazonaws.com/ACCOUNT_ID/ml-serving-platform-async-requests"
+  CPU_BACKEND_ENDPOINT: "cpu-backend.default.svc.cluster.local:8080"
+  GPU_BACKEND_ENDPOINT: "gpu-backend.default.svc.cluster.local:8080"
+  INFERENTIA_BACKEND_ENDPOINT: "neuron-backend.default.svc.cluster.local:8080"
+  PROMETHEUS_ENDPOINT: "http://prometheus-server.monitoring.svc.cluster.local:80"
+  DEFAULT_SLA_TIER: "silver"
+  COST_OPTIMIZATION_ENABLED: "true"
+  FALLBACK_ENABLED: "true"
+  LOG_LEVEL: "info"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: router
+  namespace: default
+  labels:
+    app: router
+    component: router
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: router
+  template:
+    metadata:
+      labels:
+        app: router
+        component: router
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: router
+      containers:
+      - name: router
+        image: ECR_REPO_PREFIX/ml-serving-platform/router:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        - containerPort: 9090
+          name: grpc
+          protocol: TCP
+        envFrom:
+        - configMapRef:
+            name: router-config
+        env:
+        - name: VERSION
+          value: "1.0.0"
+        - name: ENVIRONMENT
+          value: "production"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        accelerator: cpu
+      tolerations:
+      - key: accelerator
+        operator: Equal
+        value: cpu
+        effect: NoSchedule
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: router
+  namespace: default
+  labels:
+    app: router
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8080
+    protocol: TCP
+  - name: grpc
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  selector:
+    app: router
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: router-internal
+  namespace: default
+  labels:
+    app: router
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: grpc
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  selector:
+    app: router
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: router-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: router
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: router-vs
+  namespace: default
+spec:
+  hosts:
+  - router.default.svc.cluster.local
+  http:
+  - match:
+    - uri:
+        prefix: /api/v1/predict
+    route:
+    - destination:
+        host: router.default.svc.cluster.local
+        port:
+          number: 8080
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: router.default.svc.cluster.local
+        port:
+          number: 8080
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: router-dr
+  namespace: default
+spec:
+  host: router.default.svc.cluster.local
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 10
+        maxRetries: 3
+        consecutiveGatewayErrors: 5
+        interval: 30s
+        baseEjectionTime: 30s
+        maxEjectionPercent: 50
+    loadBalancer:
+      simple: LEAST_CONN
+  portLevelSettings:
+  - port:
+      number: 8080
+    connectionPool:
+      tcp:
+        maxConnections: 50 

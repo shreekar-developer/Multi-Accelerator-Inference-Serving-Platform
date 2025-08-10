@@ -1,0 +1,415 @@
+# CPU Backend Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cpu-backend
+  namespace: default
+  labels:
+    app: cpu-backend
+    accelerator: cpu
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cpu-backend
+  template:
+    metadata:
+      labels:
+        app: cpu-backend
+        accelerator: cpu
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: cpu-backend
+        image: ECR_REPO_PREFIX/ml-serving-platform/cpu-backend:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        env:
+        - name: PORT
+          value: "8080"
+        - name: HOST
+          value: "0.0.0.0"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      nodeSelector:
+        accelerator: cpu
+        kubernetes.io/arch: arm64
+      tolerations:
+      - key: accelerator
+        operator: Equal
+        value: cpu
+        effect: NoSchedule
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cpu-backend
+  namespace: default
+  labels:
+    app: cpu-backend
+    accelerator: cpu
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: cpu-backend
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cpu-backend-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cpu-backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 30
+---
+# GPU Backend Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-backend
+  namespace: default
+  labels:
+    app: gpu-backend
+    accelerator: gpu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gpu-backend
+  template:
+    metadata:
+      labels:
+        app: gpu-backend
+        accelerator: gpu
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: gpu-backend
+        image: ECR_REPO_PREFIX/ml-serving-platform/gpu-backend:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        env:
+        - name: PORT
+          value: "8080"
+        - name: HOST
+          value: "0.0.0.0"
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility"
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "1000m"
+            nvidia.com/gpu: 1
+          limits:
+            memory: "16Gi"
+            cpu: "4000m"
+            nvidia.com/gpu: 1
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      nodeSelector:
+        accelerator: gpu
+        nvidia.com/gpu: "true"
+      tolerations:
+      - key: accelerator
+        operator: Equal
+        value: gpu
+        effect: NoSchedule
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gpu-backend
+  namespace: default
+  labels:
+    app: gpu-backend
+    accelerator: gpu
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: gpu-backend
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gpu-backend-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gpu-backend
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600  # Slower scale down for GPU
+    scaleUp:
+      stabilizationWindowSeconds: 60
+---
+# Inferentia Backend Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neuron-backend
+  namespace: default
+  labels:
+    app: neuron-backend
+    accelerator: inferentia
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: neuron-backend
+  template:
+    metadata:
+      labels:
+        app: neuron-backend
+        accelerator: inferentia
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: neuron-backend
+        image: ECR_REPO_PREFIX/ml-serving-platform/neuron-backend:latest
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        env:
+        - name: PORT
+          value: "8080"
+        - name: HOST
+          value: "0.0.0.0"
+        - name: NEURON_RT_NUM_CORES
+          value: "1"
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+            aws.amazon.com/neuron: 1
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+            aws.amazon.com/neuron: 1
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: neuron-device
+          mountPath: /dev/neuron0
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: neuron-device
+        hostPath:
+          path: /dev/neuron0
+      - name: tmp
+        emptyDir: {}
+      nodeSelector:
+        accelerator: inferentia
+        aws.amazon.com/neuron: "true"
+      tolerations:
+      - key: accelerator
+        operator: Equal
+        value: inferentia
+        effect: NoSchedule
+      - key: aws.amazon.com/neuron
+        operator: Exists
+        effect: NoSchedule
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: neuron-backend
+  namespace: default
+  labels:
+    app: neuron-backend
+    accelerator: inferentia
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  selector:
+    app: neuron-backend
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: neuron-backend-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: neuron-backend
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600  # Slower scale down for Inferentia
+    scaleUp:
+      stabilizationWindowSeconds: 120
+---
+# Network Policies for Backend Communication
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-network-policy
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: router
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: router
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  - to:
+    - podSelector:
+        matchExpressions:
+        - key: accelerator
+          operator: In
+          values: ["cpu", "gpu", "inferentia"]
+    ports:
+    - protocol: TCP
+      port: 8080
+  - to: []  # Allow all egress for AWS services
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80 
