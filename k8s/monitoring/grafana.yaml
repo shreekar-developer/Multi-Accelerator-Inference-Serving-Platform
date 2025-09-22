@@ -1,0 +1,468 @@
+---
+# Grafana ConfigMap for Dashboards
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+  labels:
+    app: grafana
+data:
+  inference-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Inference Platform Overview",
+        "tags": ["inference", "ml", "overview"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Request Rate by Accelerator",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "sum(rate(inference_requests_total[5m])) by (accelerator)",
+                "legendFormat": "{{accelerator}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "reqps",
+                "color": {"mode": "palette-classic"}
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "P95 Latency by Accelerator",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "inference:p95_latency_ms",
+                "legendFormat": "{{accelerator}} - {{model_id}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "ms",
+                "color": {"mode": "palette-classic"}
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "SLA Compliance",
+            "type": "bargauge",
+            "targets": [
+              {
+                "expr": "inference:sla_compliance_gold",
+                "legendFormat": "Gold - {{model_id}}"
+              },
+              {
+                "expr": "inference:sla_compliance_silver",
+                "legendFormat": "Silver - {{model_id}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "min": 0,
+                "max": 100,
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "yellow", "value": 95},
+                    {"color": "green", "value": 99}
+                  ]
+                }
+              }
+            },
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+          },
+          {
+            "id": 4,
+            "title": "Error Rate by Accelerator",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "inference:error_rate * 100",
+                "legendFormat": "{{accelerator}} - {{model_id}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "color": {"mode": "palette-classic"}
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+          },
+          {
+            "id": 5,
+            "title": "Queue Depth",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "inference:queue_depth",
+                "legendFormat": "{{accelerator}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "color": {"mode": "palette-classic"}
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+          }
+        ],
+        "time": {"from": "now-1h", "to": "now"},
+        "refresh": "30s"
+      }
+    }
+
+  cost-analysis.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Cost Analysis Dashboard",
+        "tags": ["inference", "cost", "optimization"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Cost per 1K Requests",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "inference:cost_per_1k_requests",
+                "legendFormat": "{{accelerator}} - {{model_id}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "currencyUSD",
+                "color": {"mode": "palette-classic"}
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Total Hourly Cost by Accelerator",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "sum(inference_node_cost_per_hour) by (accelerator)",
+                "legendFormat": "{{accelerator}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "currencyUSD",
+                "color": {"mode": "palette-classic"}
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "Cost Efficiency (QPS per Dollar)",
+            "type": "bargauge",
+            "targets": [
+              {
+                "expr": "inference:request_rate / inference_node_cost_per_hour",
+                "legendFormat": "{{accelerator}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "color": {"mode": "palette-classic"}
+              }
+            },
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+          },
+          {
+            "id": 4,
+            "title": "Resource Utilization vs Cost",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "rate(container_cpu_usage_seconds_total[5m]) * 100",
+                "legendFormat": "CPU % - {{accelerator}}"
+              },
+              {
+                "expr": "container_memory_usage_bytes / container_spec_memory_limit_bytes * 100",
+                "legendFormat": "Memory % - {{accelerator}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "color": {"mode": "palette-classic"}
+              }
+            },
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16}
+          }
+        ],
+        "time": {"from": "now-1h", "to": "now"},
+        "refresh": "30s"
+      }
+    }
+
+  sla-compliance.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "SLA Compliance Dashboard",
+        "tags": ["inference", "sla", "compliance"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Gold Tier SLA Compliance (>95%)",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "inference:sla_compliance_gold",
+                "legendFormat": "{{model_id}} - {{accelerator}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "min": 0,
+                "max": 100,
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "yellow", "value": 95},
+                    {"color": "green", "value": 99}
+                  ]
+                }
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Silver Tier SLA Compliance (>98%)",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "inference:sla_compliance_silver",
+                "legendFormat": "{{model_id}} - {{accelerator}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "min": 0,
+                "max": 100,
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "yellow", "value": 98},
+                    {"color": "green", "value": 99.5}
+                  ]
+                }
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "Latency Distribution by SLA Tier",
+            "type": "heatmap",
+            "targets": [
+              {
+                "expr": "sum(rate(inference_request_duration_seconds_bucket[5m])) by (le, sla_tier)",
+                "format": "heatmap",
+                "legendFormat": "{{sla_tier}}"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+          },
+          {
+            "id": 4,
+            "title": "SLA Violations Over Time",
+            "type": "timeseries",
+            "targets": [
+              {
+                "expr": "increase(inference_sla_violations_total[5m])",
+                "legendFormat": "{{sla_tier}} - {{model_id}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short",
+                "color": {"mode": "palette-classic"}
+              }
+            },
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16}
+          }
+        ],
+        "time": {"from": "now-1h", "to": "now"},
+        "refresh": "30s"
+      }
+    }
+
+---
+# Grafana ConfigMap for Datasources
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+  labels:
+    app: grafana
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+    - name: Prometheus
+      type: prometheus
+      access: proxy
+      url: http://prometheus:9090
+      isDefault: true
+      editable: true
+    - name: Loki
+      type: loki
+      access: proxy
+      url: http://loki:3100
+      editable: true
+
+---
+# Grafana ConfigMap for Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+  namespace: monitoring
+  labels:
+    app: grafana
+data:
+  grafana.ini: |
+    [analytics]
+    check_for_updates = true
+    [grafana_net]
+    url = https://grafana.net
+    [log]
+    mode = console
+    [paths]
+    data = /var/lib/grafana/
+    logs = /var/log/grafana
+    plugins = /var/lib/grafana/plugins
+    provisioning = /etc/grafana/provisioning
+    [server]
+    root_url = http://localhost:3000/
+    [security]
+    admin_user = admin
+    admin_password = admin123
+    [users]
+    allow_sign_up = false
+
+---
+# Grafana Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      securityContext:
+        fsGroup: 472
+        supplementalGroups:
+          - 0
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.0.0
+        ports:
+        - containerPort: 3000
+          name: http-grafana
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /robots.txt
+            port: 3000
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 2
+        livenessProbe:
+          failureThreshold: 3
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          successThreshold: 1
+          tcpSocket:
+            port: 3000
+          timeoutSeconds: 1
+        resources:
+          requests:
+            cpu: 250m
+            memory: 750Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        volumeMounts:
+        - mountPath: /var/lib/grafana
+          name: grafana-pv
+        - mountPath: /etc/grafana/grafana.ini
+          name: grafana-config
+          subPath: grafana.ini
+        - mountPath: /etc/grafana/provisioning/datasources
+          name: grafana-datasources
+          readOnly: false
+        - mountPath: /etc/grafana/provisioning/dashboards
+          name: grafana-dashboards
+          readOnly: false
+      volumes:
+      - name: grafana-pv
+        emptyDir: {}
+      - name: grafana-config
+        configMap:
+          defaultMode: 420
+          name: grafana-config
+      - name: grafana-datasources
+        configMap:
+          defaultMode: 420
+          name: grafana-datasources
+      - name: grafana-dashboards
+        configMap:
+          defaultMode: 420
+          name: grafana-dashboards
+
+---
+# Grafana Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    app: grafana
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 3000
+    protocol: TCP
+    targetPort: http-grafana
+  selector:
+    app: grafana

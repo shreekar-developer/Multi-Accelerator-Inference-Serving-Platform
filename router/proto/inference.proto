@@ -1,0 +1,284 @@
+syntax = "proto3";
+
+package inference.router.v1;
+
+option go_package = "github.com/ml-serving-platform/router/proto";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// InferenceRouter service definition
+service InferenceRouter {
+  // Synchronous prediction
+  rpc Predict(PredictRequest) returns (PredictResponse);
+  
+  // Asynchronous prediction
+  rpc PredictAsync(PredictAsyncRequest) returns (PredictAsyncResponse);
+  
+  // Get model profiles
+  rpc GetModelProfile(GetModelProfileRequest) returns (GetModelProfileResponse);
+  
+  // List available models
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+  
+  // Get routing status and debug information
+  rpc GetRoutingStatus(GetRoutingStatusRequest) returns (GetRoutingStatusResponse);
+  
+  // Get live metrics
+  rpc GetLiveMetrics(GetLiveMetricsRequest) returns (GetLiveMetricsResponse);
+  
+  // Health check
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// SLA Tier enumeration
+enum SLATier {
+  SLA_TIER_UNSPECIFIED = 0;
+  SLA_TIER_GOLD = 1;    // p99 ≤ 50ms
+  SLA_TIER_SILVER = 2;  // p99 ≤ 150ms
+  SLA_TIER_BRONZE = 3;  // Best effort
+}
+
+// Accelerator Type enumeration
+enum AcceleratorType {
+  ACCELERATOR_TYPE_UNSPECIFIED = 0;
+  ACCELERATOR_TYPE_CPU = 1;
+  ACCELERATOR_TYPE_GPU = 2;
+  ACCELERATOR_TYPE_INFERENTIA = 3;
+}
+
+// Request Status enumeration
+enum RequestStatus {
+  REQUEST_STATUS_UNSPECIFIED = 0;
+  REQUEST_STATUS_PENDING = 1;
+  REQUEST_STATUS_PROCESSING = 2;
+  REQUEST_STATUS_COMPLETED = 3;
+  REQUEST_STATUS_FAILED = 4;
+  REQUEST_STATUS_CANCELLED = 5;
+}
+
+// Prediction request message
+message PredictRequest {
+  string model_id = 1;
+  string version = 2;
+  SLATier sla_tier = 3;
+  repeated google.protobuf.Struct inputs = 4;
+  string session_id = 5;
+  string request_id = 6;
+  bool batch_mode = 7;
+  int32 max_batch_size = 8;
+  int32 timeout_seconds = 9;
+  map<string, string> metadata = 10;
+}
+
+// Prediction response message
+message PredictResponse {
+  string request_id = 1;
+  repeated google.protobuf.Struct outputs = 2;
+  AcceleratorType accelerator_used = 3;
+  double latency_ms = 4;
+  double cost_estimate = 5;
+  RoutingDecision routing_decision = 6;
+  google.protobuf.Timestamp processed_at = 7;
+  map<string, string> metadata = 8;
+}
+
+// Asynchronous prediction request
+message PredictAsyncRequest {
+  string model_id = 1;
+  string version = 2;
+  SLATier sla_tier = 3;
+  repeated google.protobuf.Struct inputs = 4;
+  string callback_url = 5;
+  string correlation_id = 6;
+  int32 priority = 7;
+  int32 max_batch_size = 8;
+  int32 timeout_seconds = 9;
+  map<string, string> metadata = 10;
+}
+
+// Asynchronous prediction response
+message PredictAsyncResponse {
+  string request_id = 1;
+  string correlation_id = 2;
+  RequestStatus status = 3;
+  string queue_position = 4;
+  string estimated_completion_time = 5;
+  string status_url = 6;
+  map<string, string> metadata = 7;
+}
+
+// Routing decision information
+message RoutingDecision {
+  AcceleratorType accelerator = 1;
+  string backend_endpoint = 2;
+  double estimated_latency_ms = 3;
+  double cost_per_request = 4;
+  double confidence_score = 5;
+  string reason = 6;
+  bool fallback_used = 7;
+  int32 queue_position = 8;
+  repeated string alternative_accelerators = 9;
+}
+
+// Model profile request
+message GetModelProfileRequest {
+  string model_id = 1;
+  string version = 2;
+  AcceleratorType accelerator = 3;
+}
+
+// Model profile response
+message GetModelProfileResponse {
+  ModelProfile profile = 1;
+}
+
+// Model profile information
+message ModelProfile {
+  string model_id = 1;
+  string version = 2;
+  AcceleratorType accelerator = 3;
+  int32 batch_size = 4;
+  int32 sequence_length = 5;
+  double p50_latency_ms = 6;
+  double p95_latency_ms = 7;
+  double p99_latency_ms = 8;
+  double qps_sustained = 9;
+  int32 memory_mb = 10;
+  double cost_per_hour = 11;
+  google.protobuf.Timestamp last_updated = 12;
+  map<string, string> metadata = 13;
+}
+
+// List models request
+message ListModelsRequest {
+  string filter = 1;
+  int32 page_size = 2;
+  string page_token = 3;
+}
+
+// List models response
+message ListModelsResponse {
+  repeated ModelInfo models = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+// Model information
+message ModelInfo {
+  string model_id = 1;
+  repeated string versions = 2;
+  repeated AcceleratorType supported_accelerators = 3;
+  string description = 4;
+  repeated SLATier supported_sla_tiers = 5;
+  map<string, string> metadata = 6;
+}
+
+// Routing status request
+message GetRoutingStatusRequest {
+  string model_id = 1;
+  AcceleratorType accelerator = 2;
+}
+
+// Routing status response
+message GetRoutingStatusResponse {
+  repeated AcceleratorStatus accelerator_status = 1;
+  RoutingStats routing_stats = 2;
+  repeated CircuitBreakerStatus circuit_breakers = 3;
+}
+
+// Accelerator status
+message AcceleratorStatus {
+  AcceleratorType accelerator = 1;
+  int32 active_instances = 2;
+  double cpu_utilization = 3;
+  double memory_utilization = 4;
+  int32 queue_depth = 5;
+  double current_p95_latency_ms = 6;
+  double current_qps = 7;
+  bool healthy = 8;
+  string last_health_check = 9;
+}
+
+// Routing statistics
+message RoutingStats {
+  int64 total_requests = 1;
+  int64 requests_by_accelerator_cpu = 2;
+  int64 requests_by_accelerator_gpu = 3;
+  int64 requests_by_accelerator_inferentia = 4;
+  double avg_routing_latency_ms = 5;
+  double cache_hit_rate = 6;
+  int64 fallback_count = 7;
+}
+
+// Circuit breaker status
+message CircuitBreakerStatus {
+  string name = 1;
+  string state = 2;
+  int32 failure_count = 3;
+  int32 success_count = 4;
+  google.protobuf.Timestamp last_failure = 5;
+  google.protobuf.Timestamp next_attempt = 6;
+}
+
+// Live metrics request
+message GetLiveMetricsRequest {
+  AcceleratorType accelerator = 1;
+  string time_range = 2;
+}
+
+// Live metrics response
+message GetLiveMetricsResponse {
+  repeated MetricData metrics = 1;
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// Metric data
+message MetricData {
+  string name = 1;
+  string type = 2;
+  double value = 3;
+  map<string, string> labels = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// Health check request
+message HealthCheckRequest {
+  string service = 1;
+}
+
+// Health check response
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    SERVICE_UNKNOWN = 3;
+  }
+  ServingStatus status = 1;
+  repeated string details = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// Batch processing messages
+message BatchRequest {
+  string batch_id = 1;
+  repeated PredictRequest requests = 2;
+  int32 max_parallel = 3;
+  bool preserve_order = 4;
+}
+
+message BatchResponse {
+  string batch_id = 1;
+  repeated PredictResponse responses = 2;
+  BatchStats stats = 3;
+}
+
+message BatchStats {
+  int32 total_requests = 1;
+  int32 successful_requests = 2;
+  int32 failed_requests = 3;
+  double total_processing_time_ms = 4;
+  double avg_latency_ms = 5;
+  double total_cost = 6;
+}

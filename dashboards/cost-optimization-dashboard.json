@@ -1,0 +1,302 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "ML Inference Platform - Cost Optimization",
+    "tags": ["ml", "inference", "cost", "optimization"],
+    "timezone": "browser",
+    "refresh": "1m",
+    "time": {
+      "from": "now-24h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Hourly Cost by Accelerator",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(inference_node_cost_per_hour) by (accelerator)",
+            "legendFormat": "{{accelerator}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "fillOpacity": 20,
+              "gradientMode": "hue",
+              "spanNulls": false,
+              "insertNulls": false,
+              "showPoints": "never",
+              "pointSize": 5,
+              "stacking": {"mode": "normal", "group": "A"}
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "table", "placement": "right", "values": ["value", "max", "mean"]}
+        }
+      },
+      {
+        "id": 2,
+        "title": "Cost per 1K Requests",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "targets": [
+          {
+            "expr": "(sum(inference_node_cost_per_hour) by (accelerator) / sum(rate(inference_requests_total[1h])) by (accelerator)) * (1000 / 3600)",
+            "legendFormat": "{{accelerator}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "color": {"mode": "palette-classic"},
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.1},
+                {"color": "red", "value": 0.5}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "orientation": "horizontal",
+          "textMode": "value_and_name",
+          "colorMode": "background"
+        }
+      },
+      {
+        "id": 3,
+        "title": "Cost Efficiency (Requests per Dollar per Hour)",
+        "type": "bargauge",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "sum(rate(inference_requests_total[1h])) by (accelerator) * 3600 / sum(inference_node_cost_per_hour) by (accelerator)",
+            "legendFormat": "{{accelerator}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "continuous-GrYlRd"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 1000},
+                {"color": "green", "value": 5000}
+              ]
+            }
+          }
+        },
+        "options": {
+          "orientation": "horizontal",
+          "displayMode": "gradient",
+          "showUnfilled": true
+        }
+      },
+      {
+        "id": 4,
+        "title": "Resource Utilization vs Cost",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "targets": [
+          {
+            "expr": "avg(rate(container_cpu_usage_seconds_total[5m])) by (accelerator) * 100",
+            "legendFormat": "CPU % - {{accelerator}}",
+            "refId": "A"
+          },
+          {
+            "expr": "avg(container_memory_usage_bytes / container_spec_memory_limit_bytes) by (accelerator) * 100",
+            "legendFormat": "Memory % - {{accelerator}}",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "axisPlacement": "left"
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      },
+      {
+        "id": 5,
+        "title": "Waste Detection - Underutilized Instances",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "targets": [
+          {
+            "expr": "sum by (accelerator, instance) (inference_node_cost_per_hour * on(instance) group_left() (avg_over_time(rate(container_cpu_usage_seconds_total[1h])[1h:5m]) < 0.2))",
+            "legendFormat": "{{accelerator}} - {{instance}}",
+            "refId": "A",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "Value"},
+              "properties": [
+                {"id": "displayName", "value": "Wasted Cost/Hour"}
+              ]
+            }
+          ]
+        },
+        "options": {
+          "showHeader": true,
+          "sortBy": [{"desc": true, "displayName": "Wasted Cost/Hour"}]
+        }
+      },
+      {
+        "id": 6,
+        "title": "Daily Cost Trend",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+        "targets": [
+          {
+            "expr": "sum(increase(inference_node_cost_per_hour[24h])) by (accelerator)",
+            "legendFormat": "{{accelerator}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD",
+            "color": {"mode": "palette-classic"}
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Cost Optimization Recommendations",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+        "targets": [
+          {
+            "expr": "sort_desc(sum by (model_id, accelerator) (rate(inference_requests_total[1h]) * on(model_id, accelerator) group_left() inference_cost_per_1k_requests / 1000))",
+            "legendFormat": "{{model_id}} on {{accelerator}}",
+            "refId": "A",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "currencyUSD"
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "Value"},
+              "properties": [
+                {"id": "displayName", "value": "Cost per Hour"}
+              ]
+            }
+          ]
+        },
+        "options": {
+          "showHeader": true
+        }
+      },
+      {
+        "id": 8,
+        "title": "Cost vs Performance Scatter Plot",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(inference_request_duration_seconds_bucket[5m])) by (accelerator, le)) * 1000",
+            "legendFormat": "{{accelerator}}",
+            "refId": "A"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "joinByField",
+            "options": {
+              "byField": "accelerator",
+              "mode": "outer"
+            }
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "points",
+              "pointSize": 10,
+              "showPoints": "always"
+            }
+          }
+        },
+        "options": {
+          "tooltip": {"mode": "multi"},
+          "legend": {"displayMode": "list", "placement": "bottom"}
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "time_range",
+          "type": "interval",
+          "query": "1h,6h,12h,24h,7d",
+          "current": {"text": "1h", "value": "1h"},
+          "refresh": 2
+        },
+        {
+          "name": "cost_threshold",
+          "type": "custom",
+          "query": "0.01,0.05,0.1,0.5,1.0",
+          "current": {"text": "0.1", "value": "0.1"}
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "High Cost Alerts",
+          "datasource": "Prometheus",
+          "expr": "increase(alertmanager_notifications_total{alertname=\"HighCost\"}[1m])",
+          "textFormat": "Cost alert: {{instance}}",
+          "iconColor": "red"
+        },
+        {
+          "name": "Scaling Events",
+          "datasource": "Prometheus",
+          "expr": "increase(kube_pod_created[1m])",
+          "textFormat": "Pod created: {{pod}}",
+          "iconColor": "green"
+        }
+      ]
+    }
+  }
+}

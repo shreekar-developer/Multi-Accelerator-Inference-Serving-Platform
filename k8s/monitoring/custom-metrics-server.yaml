@@ -1,0 +1,311 @@
+---
+# Custom Metrics Server ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-metrics-config
+  namespace: monitoring
+  labels:
+    app: custom-metrics-server
+data:
+  config.yaml: |
+    prometheus:
+      url: http://prometheus:9090
+      query_interval: 30s
+    
+    metrics:
+      # SLO-aware metrics for HPA
+      - name: inference_p95_latency_ms
+        query: 'inference:p95_latency_ms'
+        labels: ['model_id', 'accelerator', 'sla_tier']
+      
+      - name: inference_queue_depth
+        query: 'inference:queue_depth'
+        labels: ['accelerator']
+      
+      - name: inference_sla_compliance_rate
+        query: 'inference:sla_compliance_gold'
+        labels: ['model_id', 'accelerator']
+      
+      - name: inference_cost_per_1k_requests
+        query: 'inference:cost_per_1k_requests'
+        labels: ['model_id', 'accelerator']
+      
+      - name: inference_request_rate
+        query: 'inference:request_rate'
+        labels: ['model_id', 'accelerator']
+      
+      - name: inference_error_rate
+        query: 'inference:error_rate'
+        labels: ['model_id', 'accelerator']
+    
+    scaling_rules:
+      # Gold tier: scale when p95 > 40ms (80% of 50ms SLA)
+      - name: gold_tier_latency_scale_out
+        metric: inference_p95_latency_ms
+        threshold: 40
+        direction: up
+        sla_tier: gold
+        scale_factor: 2
+      
+      # Silver tier: scale when p95 > 120ms (80% of 150ms SLA)
+      - name: silver_tier_latency_scale_out
+        metric: inference_p95_latency_ms
+        threshold: 120
+        direction: up
+        sla_tier: silver
+        scale_factor: 1.5
+      
+      # Queue depth scaling
+      - name: queue_depth_scale_out
+        metric: inference_queue_depth
+        threshold: 50
+        direction: up
+        scale_factor: 2
+      
+      # Scale down when queue is empty and latency is low
+      - name: scale_down_idle
+        metric: inference_queue_depth
+        threshold: 5
+        direction: down
+        scale_factor: 0.5
+        additional_conditions:
+          - metric: inference_p95_latency_ms
+            threshold: 25  # Well below SLA
+            direction: down
+
+---
+# Custom Metrics Server Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: custom-metrics-server
+  namespace: monitoring
+  labels:
+    app: custom-metrics-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: custom-metrics-server
+  template:
+    metadata:
+      labels:
+        app: custom-metrics-server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      containers:
+      - name: custom-metrics-server
+        image: custom-metrics-server:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+          name: http
+        - containerPort: 6443
+          name: https
+        env:
+        - name: CONFIG_FILE
+          value: /etc/config/config.yaml
+        - name: PROMETHEUS_URL
+          value: http://prometheus:9090
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        volumeMounts:
+        - name: config
+          mountPath: /etc/config
+        - name: certs
+          mountPath: /etc/certs
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          initialDelaySeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: custom-metrics-config
+      - name: certs
+        secret:
+          secretName: custom-metrics-certs
+
+---
+# Custom Metrics Server Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: custom-metrics-server
+  namespace: monitoring
+  labels:
+    app: custom-metrics-server
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  - port: 6443
+    targetPort: 6443
+    name: https
+  selector:
+    app: custom-metrics-server
+
+---
+# Custom Metrics Server ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: custom-metrics-server
+  namespace: monitoring
+
+---
+# Custom Metrics Server ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: custom-metrics-server
+rules:
+- apiGroups: [""]
+  resources: ["pods", "nodes", "services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["custom.metrics.k8s.io"]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["external.metrics.k8s.io"]
+  resources: ["*"]
+  verbs: ["*"]
+
+---
+# Custom Metrics Server ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: custom-metrics-server
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: custom-metrics-server
+subjects:
+- kind: ServiceAccount
+  name: custom-metrics-server
+  namespace: monitoring
+
+---
+# APIService for Custom Metrics
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.custom.metrics.k8s.io
+spec:
+  service:
+    name: custom-metrics-server
+    namespace: monitoring
+    port: 6443
+  group: custom.metrics.k8s.io
+  version: v1beta1
+  insecureSkipTLSVerify: true
+  groupPriorityMinimum: 100
+  versionPriority: 100
+
+---
+# APIService for External Metrics
+apiVersion: apiregistration.k8s.io/v1
+kind: APIService
+metadata:
+  name: v1beta1.external.metrics.k8s.io
+spec:
+  service:
+    name: custom-metrics-server
+    namespace: monitoring
+    port: 6443
+  group: external.metrics.k8s.io
+  version: v1beta1
+  insecureSkipTLSVerify: true
+  groupPriorityMinimum: 100
+  versionPriority: 100
+
+---
+# Self-signed certificate for custom metrics server
+apiVersion: v1
+kind: Secret
+metadata:
+  name: custom-metrics-certs
+  namespace: monitoring
+type: Opaque
+data:
+  tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURBekNDQWV1Z0F3SUJBZ0lKQUtHc3lqVUc5dE5NTUEwR0NTcUdTSWIzRFFFQkN3VUFNQkV4RHpBTkJnTlYKQkFNTUJteHZZMkZzYUc5emREQWVGdzB5TXpFeE1EWXdPVE14TURkYUZ3MDBNekV4TURZd09UTXhNRGRhTUJFeApEekFOQmdOVkJBTU1CbXh2WTJGc2FHOXpkRENDQVNJd0RRWUpLb1pJaHZjTkFRRUJCUUFEZ2dFUEFEQ0NBUW9DCmdnRUJBTHNJOFBYRjRBUGl0VTU4ZXFQY1N5bENzWDRNUXNzVDBOYWNTMjlCbTdkb1VUaGlZRUJoV2pKTGVTOTEKc2VzZHpnM3pGSGxPUlNsL2Z3U2lMSzNjbmVVWGdyZXVGTzVmZVNTSm5mNTlWbGxsQ3Jqb2N4bXlZOVdYZmVOdAprdDdHQlZKZkFrZDhYTzBGUWpyZ3pqWHJKWWgxRHNqTG5jTGlhQnFCdGZDcFhPMFNOcGpNKzJIWnNjUzNmdGZvCnE0aTNTa3RVNTlIRW1PUGVGVXlnNkRnOVpMRXlQR0xEMEJwdDVMcWl3MHpDZWdlcE5aTXNmNExrTmY3RnhTTXMKNWdubmUwdVBsZmFiWVNWRzJVRVlhdGFpL1NmTEpDNVVkWUVNbTRGK2xJUGVuV0Z3bWNnWVZDZW1xQlRXNUNzdgpFWUZBR3VTbzFtUVMrTWJjYWFjTWFrTUNBd0VBQWFOUk1FOHdEUVlKS29aSWh2Y05BUUVMQlFBRGdnRUJBQ3loCkJLNXVKVGtQcGJyRnNSWDlWRXBVVmNVZkZOZnlYT2xsODNJOGVLVlNpRGdqbXJRZFY1QkRmTHZzZGpHU2Y3NEQKSGdVVEtUcEZlVUVxcVVkTjhEWnhYR2JTbTd4RVpzVFZoTmNyZVNwNUxaZkZvdGdnb0pGcE5oVWRLOGhyOWlQSQpxVUxwODlZVGJHZ3FWUUZjL2JqVThpQkRPVGVFWFBTTkNzUGJBVXJyMUV4RlNpQUFDc2pMNkJOQkZlbkFSYjN6CjJNUFRKbXVpSWxQUGNEbFNOTERtcGxKNWtKdEhGcHVVVlFYVnJBZXRNR3NINWVBSWJyT0l3aElxSEZmcWlEWkgKMW5YTjdKVXBxcVNVRzlUdmFQRGZ5dGNsNlhKd1I1SjhxUlVqSGZGNkFHa3VkRDdLSUdCZE5VUzFZbkZXYklKcApPVENKYXRCY0pnbz0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
+  tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2UUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktjd2dnU2pBZ0VBQW9JQkFRQzdDUEQxeGVBRDRyVk8KZkhxajNFc3BRckYrREVMTE05RFduRXR2UVp1M2FGRTRZbUJBWVZveVMza3ZkYkhySGM0Tjh4UjVUa1VwZjM4RQpvaXl0M0ozbEY0SzNyaFR1WDNra2laMytkVlpaWlFxNDZITVpzbVBWbDMzamJaTGV4Z1ZTWHdKSGZGenRCVUk2CjRNNDE2eVdJZFE3SXk1M0M0bWdhZ2JYd3FWenRFamFZelB0aDJiSEV0MzdYNkt1SXQwcExWT2ZSeEpqajNoVk0Kb09nNFBXU3hNanhpdzlBYWJlUzZvc05Nd25vSHFUV1RMSCtDNURYK3hjVWpMT1lKNTN0TGo1WDJtMkVsUnRsQgpHR3JXb3Ywbnl5UXVWSFdCREp1QmZwU0QzcDFoY0puSUdGUW5wcWdVMXVRckx4R0JRQnJrcU5aa0V2akczR21uCkRHcERBZ01CQUFFQ2dnRUFGdEdQbFBMU1VqT0ZLUXh4cHkwdFhTa1NMY1pBNjVzVTlqWGlHdllMWE9zRnBJWDQKUGdSUmJkMWNhNkFWcHJ5WG5ZcVg2aEVLcUlKWVFoRThLV2t4NXhMcUJpZWRtdUVZRXJ1TE9qdlFGdWFGYmFuWgpyRkVVcGNyZVJlaGVKVGxUTWJOSXg0U2pOWGJ6OXJYV2VTNlEyV1A3bHVHa3pUZjhSRVFjSVpqVU5KVklRSlQrCkFOYVQ3UUZOcUVnVnJRb3VEV0ZoMGVWTnYxTGpKWGxWdGVuNWZiK2hMZlVHT0pHY0NXaGNqVkx3TGVTVjhJQzYKRnN3VHVNVW5UWFNMR1U3RFRrTjdmWEZIRkw0R3NGMkJZL2lKY3d0cXZLMGcxbXhEUXNNdGJMZlNXWXVjUWlYZwpUb0lHMFJDOVNIZGdMQ0VTMkRWV0lhZzZtaEZEUjZ1YllVOWx6UUtCZ1FEcUxXdWpJUHhXUU5FdEY3RUZGb2RjCldaVUppUEJOVFFJaWVVTjNpS3EwRkVmOXpFMnlRd3lZVmtTVjVHdGNpNXNFRGlLVEJQY3VQZG5wdnJWQ1lCZ3IKVjNsQVNYTDJPTXdvOEZJZlFSaFNrNWFGSEVhZDRCUWlwbzVTM0ExVEVKZUlTUEtVVnlJdGJYZ1lNVkNyeUJUWQpzb0lTd2l0VnQ5QjVpUUtCZ1FEUjhRQjZzRTFxcFBjcW5KdW9vZGV6ZXl4b2F4Q3E4L2ltQVpYdEZLQjJJNGtKCnZFaUZJRVZhZE01aWRBcE1EbWVKMkZXVEJFU1lOcVhWaXhvWEduYVBrZUhQMm5KUFM4RHJxdGJhVmVBdmk4dHMKWURjWmZGOWNPU3NyR1VSV0FXeXlxaVBEcGlnQVpnVFhNRFdQS3hLbWJkZ2tYcG5rSHdTNGtZclZEUUtCZ0dYNwp4ZllSM0xQVHVRSXBCVzV0ZUl5ckxHZnNpbXVBNGNXdUJiT2d6c0RjOXZCVWdVdFhMVGNPRjFMbXVTZWRNdHdYCkgvRitWaU5YVUF1S0RiRlZEYlpqVGQ1WjJBd1dqYWNHNzZoQUhXTXNiUGxmNEd2QkZLVnlNS3ZOZldoZExTdVUKa0o3WkNrVWlNcTNPOGJWWHh3N3ZmZDdZejJ6VHJkVkRVZWJzUWdRRWdRS0JnUUNrSWl0VFZYVzFmbHJBT01wNApJM2RBcGFJRnl6VDRyT2dGRWZMYzBOT3pDNnRITWI1WjFKSFZGTWdnMGd5bXNsR3lGU0ZwaTVMNlNBZjFYR2JKCm1EbkV5ajNPdDZHdVlkYUxvOEZiWHBkZUlIdGhLSGJnWkJkQmhKTUZKbFdmWVBZRG9ZUUZsVFR0YVdHdkQ1cHkKVEgxNXhKNlc2dVMzSVJSVXVWVjJhUUtCZ0ZZNEpFRlJRdXFZd3hUZXJKSGZacXY2eDZyMXNtSG5QRDR4Y3V5MwpYL2xVWFVaZWNWVGVMcjJSWkNNRGNYUFhYa1JmNUF6cTVRdkRqeEJOWVZNSWdoMTlQSE9YWUJVcXpKUTNENDVPCm5KNkFLVVVqaE5YdXZGdDhxZWtSMGc0VXJNTkFUNmlYOE5VVTJ0YnBtNGZPUWJuRVZxZE1TVHNxUzJPYUJJOGwKUEVMZz09Ci0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0K
+
+---
+# Enhanced HPA with Custom Metrics
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: router-hpa-custom
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: router
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+  # Scale based on P95 latency
+  - type: External
+    external:
+      metric:
+        name: inference_p95_latency_ms
+        selector:
+          matchLabels:
+            sla_tier: gold
+      target:
+        type: AverageValue
+        averageValue: "40"  # Scale when P95 > 40ms for gold tier
+  # Scale based on queue depth
+  - type: External
+    external:
+      metric:
+        name: inference_queue_depth
+      target:
+        type: AverageValue
+        averageValue: "50"  # Scale when queue depth > 50
+  # Scale based on request rate
+  - type: External
+    external:
+      metric:
+        name: inference_request_rate
+      target:
+        type: AverageValue
+        averageValue: "100"  # Scale when request rate > 100 RPS per pod
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60

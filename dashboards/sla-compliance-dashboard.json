@@ -1,0 +1,473 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "ML Inference Platform - SLA Compliance",
+    "tags": ["ml", "inference", "sla", "compliance"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-4h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Gold Tier SLA Compliance (Target: >99%)",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "(sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"gold\", le=\"0.05\"}[5m])) / sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"gold\"}[5m]))) * 100",
+            "legendFormat": "Gold SLA Compliance",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 95},
+                {"color": "green", "value": 99}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "orientation": "auto",
+          "textMode": "value_and_name",
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center"
+        }
+      },
+      {
+        "id": 2,
+        "title": "Silver Tier SLA Compliance (Target: >98%)",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 8, "y": 0},
+        "targets": [
+          {
+            "expr": "(sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"silver\", le=\"0.15\"}[5m])) / sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"silver\"}[5m]))) * 100",
+            "legendFormat": "Silver SLA Compliance",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 95},
+                {"color": "green", "value": 98}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "orientation": "auto",
+          "textMode": "value_and_name",
+          "colorMode": "background",
+          "graphMode": "area",
+          "justifyMode": "center"
+        }
+      },
+      {
+        "id": 3,
+        "title": "SLA Violations (Last 24h)",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 16, "y": 0},
+        "targets": [
+          {
+            "expr": "sum(increase(inference_sla_violations_total[24h]))",
+            "legendFormat": "Total Violations",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": 0},
+                {"color": "yellow", "value": 10},
+                {"color": "red", "value": 100}
+              ]
+            }
+          }
+        },
+        "options": {
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "orientation": "auto",
+          "textMode": "value_and_name",
+          "colorMode": "background"
+        }
+      },
+      {
+        "id": 4,
+        "title": "P95 Latency by SLA Tier",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"gold\"}[5m])) by (le)) * 1000",
+            "legendFormat": "Gold (≤50ms)",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"silver\"}[5m])) by (le)) * 1000",
+            "legendFormat": "Silver (≤150ms)",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"bronze\"}[5m])) by (le)) * 1000",
+            "legendFormat": "Bronze (Best Effort)",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ms",
+            "color": {"mode": "palette-classic"},
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "linear",
+              "lineWidth": 2,
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "spanNulls": false,
+              "insertNulls": false,
+              "showPoints": "never",
+              "pointSize": 5,
+              "stacking": {"mode": "none", "group": "A"},
+              "axisPlacement": "auto",
+              "axisLabel": "Latency (ms)",
+              "scaleDistribution": {"type": "linear"},
+              "hideFrom": {"legend": false, "tooltip": false, "vis": false},
+              "thresholdsStyle": {"mode": "line"}
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "transparent", "value": null},
+                {"color": "red", "value": 50},
+                {"color": "red", "value": 150}
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "Gold (≤50ms)"},
+              "properties": [
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      {"color": "transparent", "value": null},
+                      {"color": "red", "value": 50}
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "matcher": {"id": "byName", "options": "Silver (≤150ms)"},
+              "properties": [
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "mode": "absolute",
+                    "steps": [
+                      {"color": "transparent", "value": null},
+                      {"color": "red", "value": 150}
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "tooltip": {"mode": "multi", "sort": "desc"},
+          "legend": {"displayMode": "table", "placement": "bottom", "values": ["value", "max"]}
+        }
+      },
+      {
+        "id": 5,
+        "title": "SLA Compliance by Model",
+        "type": "bargauge",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+        "targets": [
+          {
+            "expr": "(sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"gold\", le=\"0.05\"}[5m])) by (model_id) / sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"gold\"}[5m])) by (model_id)) * 100",
+            "legendFormat": "{{model_id}} (Gold)",
+            "refId": "A"
+          },
+          {
+            "expr": "(sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"silver\", le=\"0.15\"}[5m])) by (model_id) / sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"silver\"}[5m])) by (model_id)) * 100",
+            "legendFormat": "{{model_id}} (Silver)",
+            "refId": "B"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 95},
+                {"color": "green", "value": 99}
+              ]
+            }
+          }
+        },
+        "options": {
+          "orientation": "horizontal",
+          "displayMode": "gradient",
+          "showUnfilled": true
+        }
+      },
+      {
+        "id": 6,
+        "title": "Latency Distribution Heatmap",
+        "type": "heatmap",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
+        "targets": [
+          {
+            "expr": "sum(rate(inference_request_duration_seconds_bucket[5m])) by (le, sla_tier)",
+            "format": "heatmap",
+            "legendFormat": "{{sla_tier}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps"
+          }
+        },
+        "options": {
+          "calculate": false,
+          "yAxis": {
+            "unit": "s",
+            "scale": {
+              "type": "log",
+              "log": 2
+            }
+          },
+          "cellGap": 1,
+          "cellValues": {},
+          "color": {
+            "mode": "spectrum",
+            "scheme": "Spectral",
+            "steps": 128
+          },
+          "exemplars": {
+            "color": "rgba(255,0,255,0.7)"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "SLA Violations by Accelerator",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
+        "targets": [
+          {
+            "expr": "sum(rate(inference_sla_violations_total[5m])) by (accelerator, sla_tier)",
+            "legendFormat": "{{accelerator}} - {{sla_tier}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "palette-classic"}
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Request Success Rate",
+        "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22},
+        "targets": [
+          {
+            "expr": "sum(rate(inference_requests_total{status!~\"4..|5..\"}[5m])) by (sla_tier) / sum(rate(inference_requests_total[5m])) by (sla_tier) * 100",
+            "legendFormat": "{{sla_tier}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "color": {"mode": "palette-classic"},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 95},
+                {"color": "green", "value": 99}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "SLA Budget Burn Rate",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 30},
+        "targets": [
+          {
+            "expr": "((1 - (sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"gold\", le=\"0.05\"}[5m])) by (model_id) / sum(rate(inference_request_duration_seconds_bucket{sla_tier=\"gold\"}[5m])) by (model_id))) * 100) / 1",
+            "legendFormat": "{{model_id}}",
+            "refId": "A",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent"
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "Value"},
+              "properties": [
+                {"id": "displayName", "value": "Error Budget Burn Rate (%)"},
+                {
+                  "id": "thresholds",
+                  "value": {
+                    "steps": [
+                      {"color": "green", "value": null},
+                      {"color": "yellow", "value": 0.5},
+                      {"color": "red", "value": 2}
+                    ]
+                  }
+                },
+                {"id": "color", "value": {"mode": "thresholds"}}
+              ]
+            }
+          ]
+        },
+        "options": {
+          "showHeader": true,
+          "sortBy": [{"desc": true, "displayName": "Error Budget Burn Rate (%)"}]
+        }
+      },
+      {
+        "id": 10,
+        "title": "Alerting Status",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 30},
+        "targets": [
+          {
+            "expr": "ALERTS{alertname=~\".*SLA.*|.*Latency.*\"}",
+            "legendFormat": "{{alertname}}",
+            "refId": "A",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short"
+          },
+          "overrides": [
+            {
+              "matcher": {"id": "byName", "options": "alertstate"},
+              "properties": [
+                {"id": "displayName", "value": "Alert State"},
+                {
+                  "id": "mappings",
+                  "value": [
+                    {"options": {"firing": {"color": "red", "index": 0}}, "type": "value"},
+                    {"options": {"pending": {"color": "yellow", "index": 1}}, "type": "value"},
+                    {"options": {"inactive": {"color": "green", "index": 2}}, "type": "value"}
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "showHeader": true
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "name": "sla_tier",
+          "type": "query",
+          "query": "label_values(inference_requests_total, sla_tier)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true
+        },
+        {
+          "name": "model",
+          "type": "query",
+          "query": "label_values(inference_requests_total, model_id)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true
+        },
+        {
+          "name": "accelerator",
+          "type": "query",
+          "query": "label_values(inference_requests_total, accelerator)",
+          "refresh": 1,
+          "includeAll": true,
+          "allValue": ".*",
+          "multi": true
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "name": "SLA Violations",
+          "datasource": "Prometheus",
+          "expr": "increase(inference_sla_violations_total[1m])",
+          "textFormat": "SLA violation: {{sla_tier}} - {{model_id}}",
+          "iconColor": "red"
+        },
+        {
+          "name": "Alerts Fired",
+          "datasource": "Prometheus",
+          "expr": "increase(alertmanager_notifications_total{alertname=~\".*SLA.*|.*Latency.*\"}[1m])",
+          "textFormat": "Alert: {{alertname}}",
+          "iconColor": "orange"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,451 @@
+---
+# SQS Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sqs-worker
+  namespace: default
+  labels:
+    app: sqs-worker
+    component: async-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: sqs-worker
+  template:
+    metadata:
+      labels:
+        app: sqs-worker
+        component: async-worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: async-worker
+      containers:
+      - name: sqs-worker
+        image: sqs-worker:latest
+        imagePullPolicy: Always
+        env:
+        - name: SQS_QUEUE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: async-worker-config
+              key: sqs_queue_url
+        - name: RESULTS_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: async-worker-config
+              key: results_bucket
+        - name: ROUTER_ENDPOINT
+          value: "http://router:8080"
+        - name: AWS_REGION
+          value: "us-west-2"
+        - name: MAX_WORKERS
+          value: "10"
+        - name: BATCH_TIMEOUT
+          value: "300"
+        - name: MAX_BATCH_SIZE
+          value: "32"
+        - name: POLL_INTERVAL
+          value: "5"
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 200m
+          limits:
+            memory: 512Mi
+            cpu: 500m
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+
+---
+# Kafka Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-worker
+  namespace: default
+  labels:
+    app: kafka-worker
+    component: async-worker
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: kafka-worker
+  template:
+    metadata:
+      labels:
+        app: kafka-worker
+        component: async-worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      serviceAccountName: async-worker
+      containers:
+      - name: kafka-worker
+        image: kafka-worker:latest
+        imagePullPolicy: Always
+        env:
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: async-worker-config
+              key: kafka_bootstrap_servers
+        - name: INPUT_TOPIC
+          value: "inference-requests"
+        - name: OUTPUT_TOPIC
+          value: "inference-responses"
+        - name: CONSUMER_GROUP
+          value: "inference-workers"
+        - name: ROUTER_ENDPOINT
+          value: "http://router:8080"
+        - name: MAX_WORKERS
+          value: "20"
+        - name: MAX_BATCH_SIZE
+          value: "64"
+        - name: BATCH_TIMEOUT_MS
+          value: "30000"
+        - name: PREFETCH_COUNT
+          value: "100"
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 300m
+          limits:
+            memory: 1Gi
+            cpu: 1000m
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - "import sys; sys.exit(0)"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+
+---
+# Async Worker ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: async-worker
+  namespace: default
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/async-worker-role
+
+---
+# Async Worker ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: async-worker-config
+  namespace: default
+data:
+  sqs_queue_url: "https://sqs.us-west-2.amazonaws.com/ACCOUNT_ID/inference-batch"
+  results_bucket: "inference-batch-results"
+  kafka_bootstrap_servers: "kafka:9092"
+
+---
+# SQS Worker HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: sqs-worker-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: sqs-worker
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+  # Scale based on SQS queue depth
+  - type: External
+    external:
+      metric:
+        name: sqs_queue_depth
+        selector:
+          matchLabels:
+            queue_name: inference-batch
+      target:
+        type: AverageValue
+        averageValue: "50"  # Scale when queue depth > 50 messages per pod
+  # Scale based on CPU utilization
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+
+---
+# Kafka Worker HPA
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: kafka-worker-hpa
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kafka-worker
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+  # Scale based on Kafka consumer lag
+  - type: External
+    external:
+      metric:
+        name: kafka_consumer_lag
+        selector:
+          matchLabels:
+            consumer_group: inference-workers
+            topic: inference-requests
+      target:
+        type: AverageValue
+        averageValue: "1000"  # Scale when lag > 1000 messages per pod
+  # Scale based on CPU utilization
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  # Scale based on memory utilization
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 5
+        periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 30
+        periodSeconds: 60
+
+---
+# Network Policy for Async Workers
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: async-workers-netpol
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      component: async-worker
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow monitoring scraping
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow outbound to router
+  - to:
+    - podSelector:
+        matchLabels:
+          app: router
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow outbound to AWS services (SQS, S3, DynamoDB)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow outbound to Kafka
+  - to:
+    - podSelector:
+        matchLabels:
+          app: kafka
+    ports:
+    - protocol: TCP
+      port: 9092
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+
+---
+# Dead Letter Queue Handler Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dlq-handler
+  namespace: default
+  labels:
+    app: dlq-handler
+    component: async-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dlq-handler
+  template:
+    metadata:
+      labels:
+        app: dlq-handler
+        component: async-worker
+    spec:
+      serviceAccountName: async-worker
+      containers:
+      - name: dlq-handler
+        image: sqs-worker:latest
+        imagePullPolicy: Always
+        command: ["python", "dlq_handler.py"]
+        env:
+        - name: DLQ_URL
+          valueFrom:
+            configMapKeyRef:
+              name: async-worker-config
+              key: dlq_url
+        - name: RETRY_ATTEMPTS
+          value: "3"
+        - name: RETRY_DELAY_SECONDS
+          value: "60"
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 100m
+          limits:
+            memory: 256Mi
+            cpu: 200m
+
+---
+# Batch Status API Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: batch-status-api
+  namespace: default
+  labels:
+    app: batch-status-api
+    component: async-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: batch-status-api
+  template:
+    metadata:
+      labels:
+        app: batch-status-api
+        component: async-worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      serviceAccountName: async-worker
+      containers:
+      - name: batch-status-api
+        image: batch-status-api:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        env:
+        - name: RESULTS_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: async-worker-config
+              key: results_bucket
+        - name: AWS_REGION
+          value: "us-west-2"
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 100m
+          limits:
+            memory: 256Mi
+            cpu: 200m
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+
+---
+# Batch Status API Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: batch-status-api
+  namespace: default
+  labels:
+    app: batch-status-api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  selector:
+    app: batch-status-api
